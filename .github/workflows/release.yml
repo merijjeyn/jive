@@ -1,12 +1,15 @@
 name: Release
 
-# Publishes the package to npm when a version tag is pushed:
-#   git tag v0.2.0 && git push origin v0.2.0
-# Requires an NPM_TOKEN repository secret with publish rights for the package.
+# Publishes the package to npm when a GitHub release is published:
+#   npm version patch                      # bumps package.json, commits, tags vX.Y.Z
+#   git push --follow-tags
+#   gh release create vX.Y.Z --generate-notes
+# Authenticates with npm trusted publishing (OIDC), so no token secret is needed. The
+# package's trusted publisher on npmjs.com must name this file and allow `npm publish`.
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
   publish:
@@ -21,8 +24,10 @@ jobs:
           bun-version: 1.4.2
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
@@ -30,6 +35,5 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           [ "v$version" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != package version $version"; exit 1; }
-      - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # A GitHub pre-release goes to the `next` dist-tag, so `npm install` keeps getting the latest stable.
+      - run: npm publish --provenance --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
