@@ -17,14 +17,133 @@ further up the tree, and finally the `.env` in the Jive checkout. A project can
 therefore override the global keys with its own `.env`.
 
 ```dotenv
-OPENROUTER_API_KEY=...   # planner model
+OPENROUTER_API_KEY=...   # planner models through OpenRouter
+ANTHROPIC_API_KEY=...    # or Anthropic's API directly
+OPENAI_API_KEY=...       # or OpenAI's API directly
 JEV_API_TOKEN=...        # Jev decision service, used by `jev` nodes
-OPENROUTER_MODEL=...     # optional; default google/gemini-3.8-flash
+JIVE_MODEL=...           # optional; see "Model providers" for the default
 JEV_MODEL=...            # optional; default jev-1.13.0
 ```
 
 Changing models is explicit, in the UI or with `--model`. There is no automatic
 model fallback.
+
+## Model providers
+
+A model is named by a reference. A bare ID such as `google/gemini-3.8-flash` is
+an OpenRouter model, as before. Any other provider is named `provider:model`,
+split at the first colon, so `anthropic:claude-opus-5-5`, `openai:gpt-6-sol`
+and `ollama:qwen3:8b` all work. Use a reference with `--model`, `/model`,
+`JIVE_MODEL`, or the `defaultModel` setting below.
+
+Built-in providers:
+
+| Provider | Protocol | Key | Models |
+| --- | --- | --- | --- |
+| `openrouter` | Chat Completions | `OPENROUTER_API_KEY` | curated list plus OpenRouter's live catalog |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | Claude Fable 5.1, Opus 5.5, Sonnet 5, Haiku 4.5 |
+| `openai` | Responses | `OPENAI_API_KEY` | GPT-6 Astra, GPT-6 Sol, GPT-5.6 Sol |
+| `google` | Chat Completions | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini 3.1 Pro Preview, Gemini 3.8 Flash |
+| `deepseek` | Chat Completions | `DEEPSEEK_API_KEY` | listed by the API after `--refresh-models` |
+| `groq` | Chat Completions | `GROQ_API_KEY` | listed by the API after `--refresh-models` |
+| `ollama` | Chat Completions | none (`http://localhost:11434/v1`) | listed by the server after `--refresh-models` |
+
+Without `--model`, a new session uses `JIVE_MODEL`, then `OPENROUTER_MODEL`, then
+`defaultModel` from the configuration, then the default of the first provider
+above that has a key. A resumed session keeps its own model.
+
+The `/model` picker lists models from providers that have credentials. A model
+no provider lists can still be chosen by reference, e.g. `/model
+anthropic:claude-opus-5`. Switching providers mid-session is safe: provider-only
+state, such as signed thinking blocks and encrypted reasoning, goes back only to
+the provider or model that produced it, and every other model sees the
+conversation as plain text and tool calls.
+
+### Configuring providers and internal endpoints
+
+`~/.config/jive/models.json` (or `$JIVE_CONFIG_DIR/models.json`) adds providers
+and changes built-in ones. Comments are allowed. The file is read at startup;
+problems are shown as notices and the rest still loads.
+
+A project can check in `.jive/models.json`, for example to describe a team's
+internal endpoint. It is applied after the global file, but only when the global
+file trusts the project. Otherwise a repository could point a provider at its
+own server and receive your keys:
+
+```json
+{ "trustedProjects": ["~/work/platform"] }
+```
+
+Listing a directory trusts it and everything below it. An untrusted project's
+file is skipped with a notice that names the line to add.
+
+```jsonc
+{
+  "defaultModel": "corp:qwen3-coder",
+  // Optional: the model that names sessions, or false to keep generated names.
+  "namingModel": "corp:qwen3-coder",
+  "providers": {
+    // An internal deployment that speaks the Chat Completions protocol.
+    "corp": {
+      "name": "Corp vLLM",
+      "api": "openai-completions",
+      "baseUrl": "https://llm.internal.example.com/v1",
+      "apiKey": "$CORP_LLM_KEY",
+      "headers": { "X-Team": "${TEAM_ID}" },
+      "compat": { "reasoningFormat": "chat-template" },
+      "models": [
+        { "id": "qwen3-coder", "name": "Qwen3 Coder", "contextWindow": 262144,
+          "reasoningEfforts": ["none", "medium"] }
+      ]
+    },
+    // A gateway in front of Anthropic's API.
+    "claude-gateway": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.internal.example.com/anthropic",
+      "apiKey": "!vault read -field=key secret/claude",
+      "models": [{ "id": "claude-opus-5-5", "maxTokens": 64000,
+                   "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"] }]
+    },
+    // Built-in providers take the same fields; models merge by ID.
+    "openrouter": { "models": [{ "id": "x-ai/grok-5", "name": "xAI: Grok 5" }] }
+  }
+}
+```
+
+Provider fields:
+
+- `api`: `openai-completions` (Chat Completions: vLLM, SGLang, LiteLLM, LM Studio,
+  Ollama, Azure OpenAI's v1 API and most gateways), `anthropic-messages`, or
+  `openai-responses`. Required with `baseUrl` for a new provider.
+- `baseUrl`: the API root. Chat Completions and Responses requests go to
+  `{baseUrl}/chat/completions` and `{baseUrl}/responses`; Anthropic requests go
+  to `{baseUrl}/v1/messages`.
+- `apiKey`: a literal, `$NAME` or `${NAME}` from the environment, or
+  `!command` whose output is the key (run for each request, 10-second limit).
+  A key naming an unset variable falls back to the provider's own variables.
+- `apiKeyEnv`: variables to read the key from when `apiKey` is not set.
+- `keyless`: true for local servers that need no key.
+- `headers`: extra request headers; values interpolate like `apiKey`.
+- `models`: `id` plus optional `name`, `contextWindow` (compaction works
+  within it; default 128000), `maxTokens` (the output cap Anthropic requests
+  send), `reasoningEfforts` (levels `/effort` offers from `none`, `minimal`,
+  `low`, `medium`, `high`, `xhigh`, `max`; a configured model without it gets no
+  effort control), `reasoningMandatory`, `thinking` (Anthropic: `adaptive`,
+  `budget` or `none`) and `compat`.
+- `catalog`: `list` to read model IDs from `GET {baseUrl}/models` on
+  `--refresh-models`, or `none`.
+- `compat`: how an endpoint differs from its protocol's reference. Defaults are
+  detected from the host and can be overridden field by field:
+  - `reasoningFormat`: `openrouter` (`reasoning` object), `openai`
+    (`reasoning_effort`; the default off OpenRouter), `chat-template`
+    (`chat_template_kwargs.enable_thinking`, for Qwen-style templates on vLLM
+    or SGLang), or `none`.
+  - `openRouterRouting`, `cacheControl`: OpenRouter's session and cache fields.
+  - `streamUsage`: set false for servers that reject `stream_options`.
+  - `thinkingBindingControls`, `eagerToolStreaming`: Anthropic beta fields,
+    on by default only for `api.anthropic.com`. Without the binding control,
+    a thinking history the API rejects after compaction is retried once
+    without its thinking blocks.
 
 At session creation, Jive snapshots the working directory's `AGENTS.md` into the
 system prompt and persists the snapshot with the session. Edits to the file take
@@ -92,9 +211,12 @@ restores it.
 
 `/effort` offers only the selected model's supported levels; unavailable levels
 are rejected rather than substituted. `auto` sends medium, or the nearest level
-the model supports. For Anthropic models each level is sent as an explicit
-thinking budget rather than an effort name. Effort persists with the session.
-Model metadata follows [OpenRouter's reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+the model supports. For Anthropic models through OpenRouter each level is sent
+as an explicit thinking budget rather than an effort name. On Anthropic's own
+API, Fable 5.1, Opus 5.5 and Sonnet 5 receive the level as their effort setting
+with summarized thinking, and Haiku 4.5 receives a thinking budget. On OpenAI's
+Responses API the level is the reasoning effort. Effort persists with the
+session. OpenRouter metadata follows [OpenRouter's reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
 
 ### Retries
 
@@ -142,8 +264,8 @@ jive --run examples/parallel.json
 jive --run examples/repeat.json
 jive --run examples/investigate.json --json
 jive --demo --headless --json
-jive --models
-jive --refresh-models
+jive --models                  # every provider's models; unusable ones are marked
+jive --refresh-models          # OpenRouter's catalog and listing providers' IDs
 jive --schema
 jive --version
 ```

@@ -1060,7 +1060,7 @@ describe("App", () => {
       expect(f).toContain(" model ");
       expect(f).toContain("Claude Sonnet 5");
       expect(f).toContain("GPT-6 Astra");
-      expect(f).toContain("/model <id> for a custom id");
+      expect(f).toContain("/model provider:id for others");
       // Name only: no ids, context sizes or effort levels in the list.
       expect(f).not.toContain("anthropic/claude-sonnet-5");
       expect(f).not.toContain("k ctx");

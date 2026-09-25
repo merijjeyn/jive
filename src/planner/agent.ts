@@ -34,7 +34,7 @@ import {
   excerptOversizedOutput,
   fallbackSessionName,
   listSessions as discoverSessions,
-  OpenRouterSessionNamer,
+  ModelSessionNamer,
   resolveSessionReference,
   SESSION_NAMING_MODEL,
   SESSION_NAMING_RETRIES,
@@ -44,24 +44,22 @@ import {
   type PlannerMessage,
 } from "../session/index.ts";
 import {
-  fetchOpenRouterModelCatalog,
-  loadCachedModelCatalog,
-  mergeModelOptions,
-  saveModelCatalog,
-} from "./models.ts";
-import {
-  OpenRouterClient,
-  OpenRouterError,
-  type OpenRouterCompletion,
-  type OpenRouterUsage,
+  ProviderClient,
+  ProviderError,
+  ProviderRegistry,
+  type Completion,
+  type ProviderUsage,
   type RetryPolicy,
-} from "./openrouter.ts";
+} from "../providers/index.ts";
 
 export interface AgentOptions {
   cwd: string;
   model?: string;
   sessionId?: string;
+  /** An OpenRouter key that wins over configuration and OPENROUTER_API_KEY. */
   apiKey?: string;
+  /** Providers, models and credentials; loaded from the configuration files when omitted. */
+  providers?: ProviderRegistry;
   execute: (
     graph: Graph,
     signal: AbortSignal,
@@ -77,8 +75,9 @@ export interface AgentOptions {
   supportsStreaming?: boolean;
   /** Transient-failure retries for planner requests; see DEFAULT_RETRY_POLICY. */
   retry?: Partial<RetryPolicy>;
-  /** Optional side-channel namer. createAgent() supplies Gemma 3 27B by default. */
+  /** Optional side-channel namer. createAgent() supplies one from the configured naming model. */
   generateSessionName?: SessionNameGenerator;
+  /** Recorded with generated names; the session's own model when unset. */
   sessionNamingModel?: string;
 }
 
@@ -209,7 +208,7 @@ function toolErrorContent(fields: { error: string } & Record<string, unknown>): 
   });
 }
 
-function usageMetadata(usage: OpenRouterUsage): Record<string, number> {
+function usageMetadata(usage: ProviderUsage): Record<string, number> {
   return {
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
@@ -234,8 +233,8 @@ export class GraphAgentController implements AgentController {
   #snapshot: AgentSnapshot;
   #listeners = new Set<() => void>();
   #abort?: AbortController;
-  #client?: OpenRouterClient;
-  #apiKey?: string;
+  #registry: ProviderRegistry;
+  #client: ProviderClient;
   #ready: Promise<void>;
   #sideEffects: Promise<unknown> = Promise.resolve();
   #toolSchemas: Record<string, unknown>[];
@@ -250,14 +249,18 @@ export class GraphAgentController implements AgentController {
   constructor(options: AgentOptions) {
     this.options = options;
     this.#store = new SessionStore({ cwd: options.cwd, sessionId: options.sessionId });
-    this.#apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
+    this.#registry = options.providers ?? new ProviderRegistry({
+      cwd: options.cwd,
+      ...(options.apiKey ? { keys: { openrouter: options.apiKey } } : {}),
+    });
+    this.#client = new ProviderClient({ registry: this.#registry, ...(options.retry ? { retry: options.retry } : {}) });
     this.#toolSchemas = [normalizeToolSchema(options.toolSchema), graphModToolSchema()];
-    const model = options.model ?? "";
+    const model = options.model ? this.#registry.canonical(options.model) : "";
     this.#snapshot = {
       messages: [],
       busy: false,
       model,
-      models: mergeModelOptions(undefined, model ? [model] : []),
+      models: this.#registry.modelOptions(model ? [model] : []),
       events: [],
       sessionId: this.store.sessionId,
       sessionName: fallbackSessionName(this.store.sessionId),
@@ -266,7 +269,6 @@ export class GraphAgentController implements AgentController {
       cachedTokens: 0,
       phase: "idle",
     };
-    if (this.#apiKey) this.#client = new OpenRouterClient({ apiKey: this.#apiKey, ...(this.options.retry ? { retry: this.options.retry } : {}) });
     this.#ready = this.#initialize().catch((error) => {
       this.#update({ error: `Could not restore session: ${errorMessage(error)}` });
     });
@@ -278,6 +280,10 @@ export class GraphAgentController implements AgentController {
 
   get store(): SessionStore {
     return this.#store;
+  }
+
+  get providers(): ProviderRegistry {
+    return this.#registry;
   }
 
   get sessionDirectory(): string {
@@ -322,15 +328,14 @@ export class GraphAgentController implements AgentController {
 
     if (!this.#snapshot.model) {
       await this.store.appendMessage({ role: "user", content: input }, chatId);
-      await this.#fail("Select an OpenRouter model before submitting.");
+      await this.#fail("Select a model before submitting: /model, --model, or defaultModel in ~/.config/jive/models.json.");
       this.#scheduleAutoName(requestStore);
       return;
     }
-    if (!this.#apiKey || !this.#client) {
+    const unusable = this.#unusableModel(this.#snapshot.model);
+    if (unusable) {
       await this.store.appendMessage({ role: "user", content: input }, chatId);
-      await this.#fail(
-        "OpenRouter API key is missing. Set OPENROUTER_API_KEY or pass apiKey to createAgent(), then restart or create a new controller.",
-      );
+      await this.#fail(unusable);
       this.#scheduleAutoName(requestStore);
       return;
     }
@@ -352,8 +357,8 @@ export class GraphAgentController implements AgentController {
       } else {
         const prefix = error instanceof ContextCapacityError
           ? "Planner context is over capacity"
-          : error instanceof OpenRouterError
-            ? "OpenRouter error"
+          : error instanceof ProviderError
+            ? `${error.providerName ?? "Provider"} error`
             : "Planner error";
         await this.#fail(`${prefix}: ${errorMessage(error)}`, error);
       }
@@ -534,13 +539,14 @@ export class GraphAgentController implements AgentController {
     let option = models.find((candidate) => candidate.id === targetModel);
     if (option?.reasoningEfforts === undefined) {
       try {
-        const catalog = await fetchOpenRouterModelCatalog({
-          apiKey: this.#apiKey,
+        const provider = this.#registry.resolve(targetModel).provider;
+        const failures = await this.#registry.refreshCatalogs(this.options.cwd, {
+          providers: [provider.id],
           signal: AbortSignal.timeout(EFFORT_METADATA_TIMEOUT_MS),
         });
-        await saveModelCatalog(this.options.cwd, catalog);
+        if (failures.length) throw new Error(failures.join("; "));
         this.#assertEffortTarget(targetStore, targetModel, targetRevision);
-        models = mergeModelOptions(catalog, [targetModel]);
+        models = this.#registry.modelOptions([targetModel]);
       } catch (error) {
         this.#assertEffortTarget(targetStore, targetModel, targetRevision);
         const message = `Could not verify reasoning efforts for ${targetModel}: ${errorMessage(error)}`;
@@ -569,9 +575,14 @@ export class GraphAgentController implements AgentController {
   }
 
   setModel(id: string): void {
-    const model = id.trim();
-    if (!model) {
+    if (!id.trim()) {
       this.#update({ error: "Model ID cannot be empty." });
+      return;
+    }
+    const model = this.#registry.canonical(id);
+    const unknown = this.#unknownProvider(model);
+    if (unknown) {
+      this.#update({ error: unknown });
       return;
     }
     if (this.#snapshot.busy) {
@@ -585,7 +596,7 @@ export class GraphAgentController implements AgentController {
     this.#controlRevision += 1;
     const models = this.#snapshot.models.some((option) => option.id === model)
       ? this.#snapshot.models
-      : [...this.#snapshot.models, { id: model, name: model }];
+      : [...this.#snapshot.models, ...this.#registry.modelOptions([model]).filter((option) => option.id === model)];
     const selected = models.find((option) => option.id === model);
     const effort = this.#snapshot.effort;
     const resetEffort = this.#snapshot.model !== model && effort !== undefined &&
@@ -626,10 +637,14 @@ export class GraphAgentController implements AgentController {
   /** Explicit opt-in refresh; construction never waits on the network. */
   async refreshModels(signal?: AbortSignal): Promise<ModelOption[]> {
     await this.#ready;
-    const catalog = await fetchOpenRouterModelCatalog({ apiKey: this.#apiKey, signal });
-    await saveModelCatalog(this.options.cwd, catalog);
+    let current: ReturnType<ProviderRegistry["resolve"]>["provider"] | undefined;
+    try { current = this.#snapshot.model ? this.#registry.resolve(this.#snapshot.model).provider : undefined; } catch { /* reported on submit */ }
+    const failures = await this.#registry.refreshCatalogs(this.options.cwd, { ...(signal ? { signal } : {}) });
+    // Other providers' failures are theirs; the selected model's metadata is what the caller needs.
+    const own = current && failures.find((failure) => failure.startsWith(`${current.name}:`));
+    if (own) throw new Error(own);
     const custom = this.#snapshot.model ? [this.#snapshot.model] : [];
-    const models = mergeModelOptions(catalog, custom);
+    const models = this.#registry.modelOptions(custom);
     const selected = models.find((option) => option.id === this.#snapshot.model);
     const effort = this.#snapshot.effort;
     const resetEffort = effort !== undefined && !selected?.reasoningEfforts?.includes(effort);
@@ -652,7 +667,11 @@ export class GraphAgentController implements AgentController {
 
   async #initialize(): Promise<void> {
     const restored = await this.#hydrateStore(this.store, this.options.model);
-    this.#snapshot = restored.snapshot;
+    // Configuration problems are about this machine, not the session, so they are shown, not logged.
+    const diagnostics: ChatEntry[] = this.#registry.diagnostics.map((text) => ({
+      id: randomUUID(), role: "notice", text: `Model configuration: ${text}`,
+    }));
+    this.#snapshot = { ...restored.snapshot, messages: [...restored.snapshot.messages, ...diagnostics] };
     this.#projectInstructions = restored.projectInstructions;
     this.#projectSkills = restored.projectSkills;
     this.#emit();
@@ -668,14 +687,14 @@ export class GraphAgentController implements AgentController {
     const projectInstructions = await this.#loadSessionProjectInstructions(store);
     const projectSkills = await this.#loadSessionProjectSkills(store, fresh);
     const recovered = await store.recoverInterruptedToolCalls();
-    const cachedCatalog = await loadCachedModelCatalog(this.options.cwd);
+    await this.#registry.loadCachedCatalogs(this.options.cwd);
     const storedModel = store.latestModel();
-    const model = modelOverride ?? storedModel ?? this.#snapshot.model ?? "";
+    const model = modelOverride ? this.#registry.canonical(modelOverride) : storedModel ?? this.#snapshot.model ?? "";
     const storedEffort = store.latestEffort();
     const restoredEffort = storedEffort && REASONING_EFFORT_SET.has(storedEffort)
       ? storedEffort
       : undefined;
-    const models = mergeModelOptions(cachedCatalog, model ? [model] : []);
+    const models = this.#registry.modelOptions(model ? [model] : []);
     const selected = models.find((option) => option.id === model);
     const changedModel = modelOverride !== undefined && model !== storedModel;
     const resetRestoredEffort = restoredEffort !== undefined && (
@@ -853,7 +872,7 @@ export class GraphAgentController implements AgentController {
       const reasoningId = `reasoning-${randomUUID()}`;
       let streamed = false;
       let reasoned = false;
-      let completion: OpenRouterCompletion;
+      let completion: Completion;
       const building = new GraphBuildingRound({
         store: requestStore, signal, execute: this.options.execute,
         supportsStreaming: this.options.supportsStreaming,
@@ -866,7 +885,7 @@ export class GraphAgentController implements AgentController {
         },
       });
       try {
-        completion = await this.#client!.complete({
+        completion = await this.#client.complete({
           model,
           sessionId: requestStore.sessionId,
           messages: prepared.messages,
@@ -1201,11 +1220,13 @@ export class GraphAgentController implements AgentController {
       .slice(firstUserIndex + 1)
       .map((event) => event.data.message)
       .find((message) => message.role === "assistant" && chatText(message));
+    const namingModel = this.options.sessionNamingModel ?? this.#snapshot.model;
     this.#namingSessions.add(store.sessionId);
     void (async () => {
       try {
         const name = await generate({
           sessionId: store.sessionId,
+          ...(namingModel ? { model: namingModel } : {}),
           userMessage,
           ...(assistantMessage && chatText(assistantMessage)
             ? { assistantMessage: chatText(assistantMessage) }
@@ -1213,15 +1234,11 @@ export class GraphAgentController implements AgentController {
         });
         // A manual name entered while generation was running always wins.
         if (store.latestName()) return;
-        const saved = await store.setName(
-          name,
-          "generated",
-          this.options.sessionNamingModel ?? SESSION_NAMING_MODEL,
-        );
+        const saved = await store.setName(name, "generated", namingModel || undefined);
         if (this.store === store) this.#update({ sessionName: saved });
       } catch (error) {
         await store.append("session.name.failed", {
-          model: this.options.sessionNamingModel ?? SESSION_NAMING_MODEL,
+          model: namingModel,
           attempts: SESSION_NAMING_RETRIES + 1,
           error: errorMessage(error).slice(0, 500),
         }).catch(() => undefined);
@@ -1229,6 +1246,24 @@ export class GraphAgentController implements AgentController {
         this.#namingSessions.delete(store.sessionId);
       }
     })();
+  }
+
+  /** Why a model reference cannot be used at all, or undefined. */
+  #unknownProvider(model: string): string | undefined {
+    try {
+      this.#registry.resolve(model);
+      return undefined;
+    } catch (error) {
+      return errorMessage(error);
+    }
+  }
+
+  /** Why a request with this model would fail before reaching the provider, or undefined. */
+  #unusableModel(model: string): string | undefined {
+    const unknown = this.#unknownProvider(model);
+    if (unknown) return unknown;
+    const { provider } = this.#registry.resolve(model);
+    return this.#registry.hasCredentials(provider.id) ? undefined : this.#registry.missingCredentialsMessage(provider);
   }
 
   #contextLimit(model: string, models: readonly ModelOption[]): number {
@@ -1278,8 +1313,8 @@ export class GraphAgentController implements AgentController {
     await this.#notice(message);
     await this.store.append("transport.error", {
       message,
-      ...(cause instanceof OpenRouterError && cause.status ? { status: cause.status } : {}),
-      ...(cause instanceof OpenRouterError && cause.details !== undefined
+      ...(cause instanceof ProviderError && cause.status ? { status: cause.status } : {}),
+      ...(cause instanceof ProviderError && cause.details !== undefined
         ? { details: cause.details }
         : {}),
     });
@@ -1319,17 +1354,42 @@ export class GraphAgentController implements AgentController {
   }
 }
 
+/**
+ * The model that names sessions: the configured one, else Gemma through OpenRouter when that
+ * works, else undefined, meaning each session's own planner model.
+ */
+function namingModelFor(registry: ProviderRegistry, requested?: string): string | false | undefined {
+  if (requested) return requested;
+  if (registry.namingModel !== undefined) return registry.namingModel;
+  return registry.hasCredentials(SESSION_NAMING_MODEL) ? SESSION_NAMING_MODEL : undefined;
+}
+
+/** The lightest thinking a model accepts, so a cosmetic title costs little. */
+function lightestEffort(registry: ProviderRegistry, model: string): string | undefined {
+  const supported = registry.modelOptions([model]).find((option) => option.id === registry.canonical(model))?.reasoningEfforts;
+  return ["none", "minimal", "low"].find((level) => supported?.includes(level));
+}
+
 export function createAgent(options: AgentOptions): AgentController {
-  const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
-  const namer = apiKey && !options.generateSessionName
-    ? new OpenRouterSessionNamer({ apiKey })
+  const providers = options.providers ?? new ProviderRegistry({
+    cwd: options.cwd,
+    ...(options.apiKey ? { keys: { openrouter: options.apiKey } } : {}),
+  });
+  const namingModel = namingModelFor(providers, options.sessionNamingModel);
+  const client = new ProviderClient({ registry: providers });
+  const namer = namingModel !== false && !options.generateSessionName
+    ? new ModelSessionNamer({
+      complete: (request) => client.complete(request),
+      ...(namingModel ? { model: namingModel } : {}),
+      effortFor: (model) => lightestEffort(providers, model),
+    })
     : undefined;
   return new GraphAgentController({
     ...options,
-    ...(apiKey ? { apiKey } : {}),
+    providers,
     ...(options.generateSessionName
       ? {}
       : namer ? { generateSessionName: namer.generate } : {}),
-    sessionNamingModel: options.sessionNamingModel ?? SESSION_NAMING_MODEL,
+    ...(namingModel ? { sessionNamingModel: namingModel } : {}),
   });
 }

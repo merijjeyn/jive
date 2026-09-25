@@ -96,7 +96,12 @@ export interface JevAdapter { evaluate(request: JevRequest, signal?: AbortSignal
 /** `thinking` carries the planner's reasoning for a round; it renders dimmed. */
 export interface ChatEntry { id: string; role: "user" | "assistant" | "notice" | "thinking"; text: string }
 export interface ModelOption {
+  /** A model reference: an OpenRouter ID, or `provider:model` for any other provider. */
   id: string; name: string; contextLength?: number;
+  provider?: string;
+  providerName?: string;
+  /** False when the provider has no credentials yet. */
+  available?: boolean;
   /** Undefined means metadata unavailable; [] means no effort selector. */
   reasoningEfforts?: string[];
   reasoningDefault?: string;

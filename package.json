@@ -15,6 +15,8 @@
     "terminal",
     "llm",
     "openrouter",
+    "anthropic",
+    "openai",
     "bun",
     "tui",
     "graph"
@@ -45,6 +47,7 @@
     "install-cli": "./bin/install.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.128.0",
     "@opentui/core": "0.5.11",
     "@opentui/react": "0.5.11",
     "@xterm/addon-serialize": "0.14.0",

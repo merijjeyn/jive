@@ -17,8 +17,10 @@ multi-step fixes.
   judgments over hundreds of items run inside the graph instead of the chat.
 - **Everything is recorded.** Sessions, graphs, command output, and decisions
   are saved under `.jev/` and can be resumed, inspected, and replayed.
-- **Any planner model.** Models are selected through OpenRouter; switch with
-  `/model` or `--model`.
+- **Any planner model, any provider.** OpenRouter, Anthropic, OpenAI, Google,
+  DeepSeek, Groq and Ollama are built in, and any OpenAI-, Anthropic- or
+  Responses-compatible endpoint, such as an internal deployment, can be added in
+  `~/.config/jive/models.json`. Switch with `/model` or `--model`.
 
 Built with TypeScript, [Bun](https://bun.sh), and [OpenTUI](https://github.com/sst/opentui).
 The architecture is described in [DESIGN.md](../DESIGN.md).
@@ -66,7 +68,7 @@ For the real agent, create a `.env` in your project (or home directory; Jive
 searches upward) with:
 
 ```dotenv
-OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_API_KEY=your-openrouter-key   # or ANTHROPIC_API_KEY, OPENAI_API_KEY, ...
 JEV_API_TOKEN=your-jev-key
 ```
 
@@ -79,10 +81,14 @@ jive --prefill "Find where request retries are configured and explain the policy
 jive --headless --prompt "Run the tests and summarise failures"
 ```
 
-`OPENROUTER_API_KEY` is required. `JEV_API_TOKEN` is needed only for graphs
-that use `jev` decision nodes; bash-only graphs run without it. Defaults are
-`google/gemini-3.8-flash` for planning and `jev-1.13.0` for decisions, both
-overridable with `OPENROUTER_MODEL` and `JEV_MODEL`.
+A key for at least one model provider is required. `JEV_API_TOKEN` is needed
+only for graphs that use `jev` decision nodes; bash-only graphs run without it.
+With an OpenRouter key the planner defaults to `google/gemini-3.8-flash`;
+otherwise it uses the default model of the first provider with a key. Choose
+another with `--model` (for example `anthropic:claude-opus-5-5`) or
+`JIVE_MODEL`. Decisions default to `jev-1.13.0`, overridable with `JEV_MODEL`.
+[Model providers](USAGE.md#model-providers) covers other providers and
+internal endpoints.
 
 The UI has a bottom composer, a conversation that grows upward, and live graph
 rows that turn green as nodes finish. Type `/` for commands (`/model`,

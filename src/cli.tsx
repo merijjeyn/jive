@@ -9,7 +9,7 @@ import { runtimeCatalog } from "./core/catalog";
 import { ExtractorRegistry } from "./plugins/registry";
 import { JevClient } from "./jev/client";
 import { createDemoController, demoGraph, FixtureJev } from "./demo";
-import { CURATED_MODELS, fetchOpenRouterModelCatalog, saveModelCatalog } from "./planner/models";
+import { ProviderRegistry } from "./providers/index";
 import { listSessions, resolveSessionReference } from "./session/index";
 
 const {values,positionals}=parseArgs({args:process.argv.slice(2),allowPositionals:true,options:{
@@ -32,26 +32,42 @@ async function main(){
   jive --resume SESSION_ID          Restore a session, without resuming commands
   jive --sessions                   List saved sessions
   jive --resume ID --search QUERY
-  jive --models                     List curated planner models
-  jive --refresh-models             Refresh OpenRouter model capabilities
+  jive --models                     List planner models from every provider
+  jive --refresh-models             Refresh model metadata from provider catalogs
   jive --schema                     Print execute_graph JSON Schema
   jive --version                    Print the installed version
   jive update                       Pull the latest sources (git installs)
 
 Options: --cwd DIR --model ID --effort LEVEL --json --headless --prompt TEXT --prefill TEXT
+--model takes an OpenRouter ID or provider:model, e.g. anthropic:claude-opus-5-5.
 --prompt submits immediately. --prefill fills the interactive composer without submitting.
 Interactive commands: /resume [ID], /sessions, /name TEXT, /rename TEXT,
 /model, /effort [LEVEL], /new, /clear, /pin TEXT, /quit.
 The agent works in the current directory: AGENTS.md, .jev/extractors and
 .jev/sessions are read and written there. Override with --cwd DIR.
 See README.md for keys.
-Credentials: OPENROUTER_API_KEY and JEV_API_TOKEN, from .env in the working
-directory (searched upward) or the jive checkout. Install: see README.md.
+Credentials: a provider key such as OPENROUTER_API_KEY, ANTHROPIC_API_KEY or
+OPENAI_API_KEY, and JEV_API_TOKEN, from .env in the working directory (searched
+upward) or the jive checkout. Other providers and internal endpoints are
+configured in ~/.config/jive/models.json; see docs/USAGE.md. Install: see README.md.
 `);return;}
   if(values.prefill!==undefined && (values.headless || values.run || values.prompt!==undefined || positionals.length))throw new Error("--prefill is interactive-only and cannot be combined with --prompt, positional prompts, --headless, or --run");
   if(values.schema){console.log(JSON.stringify(graphSchema,null,2));return;}
-  if(values["refresh-models"]){const catalog=await fetchOpenRouterModelCatalog({signal:AbortSignal.timeout(15000)});await saveModelCatalog(cwd,catalog);console.log(`Saved ${catalog.models.length} tool-capable models.`);return;}
-  if(values.models){for(const model of CURATED_MODELS)console.log(`${model.id}\t${model.name}`);return;}
+  if(values["refresh-models"]||values.models){
+    const registry=new ProviderRegistry({cwd});
+    for(const diagnostic of registry.diagnostics)console.error(`Model configuration: ${diagnostic}`);
+    if(values["refresh-models"]){
+      const failures=await registry.refreshCatalogs(cwd,{signal:AbortSignal.timeout(15000)});
+      for(const failure of failures)console.error(`Could not refresh ${failure}`);
+      const catalog=registry.openRouterCatalog;
+      if(catalog)console.log(`Saved ${catalog.models.length} tool-capable OpenRouter models.`);
+      if(failures.length)process.exitCode=1;
+      return;
+    }
+    await registry.loadCachedCatalogs(cwd);
+    for(const model of registry.modelOptions())console.log(`${model.id}\t${model.name}${model.available?"":"\t(no credentials)"}`);
+    return;
+  }
   if(values.sessions){for(const session of await listSessions(cwd))console.log(`${session.id}\t${session.name}\t${session.updatedAt}`);return;}
   if(values.search!==undefined){
     if(!values.resume || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(values.resume))throw new Error("--search requires a valid --resume SESSION_ID");
@@ -74,7 +90,10 @@ directory (searched upward) or the jive checkout. Install: see README.md.
   else{
     const {createAgent}=await import("./planner/agent");
     const sessionId=values.resume?await resolveSessionReference(cwd,values.resume):undefined;
-    controller=await createAgent({cwd,model:values.model??(sessionId?undefined:process.env.OPENROUTER_MODEL??"google/gemini-3.8-flash"),sessionId,toolSchema:graphToolParameters,
+    const providers=new ProviderRegistry({cwd});
+    // A resumed session keeps its own model unless one is named explicitly.
+    const model=values.model??(sessionId?undefined:process.env.JIVE_MODEL??process.env.OPENROUTER_MODEL??providers.defaultModel());
+    controller=await createAgent({cwd,model,providers,sessionId,toolSchema:graphToolParameters,
       supportsStreaming:true,
       execute:async(graph,signal,onEvent,streaming)=>executeGraph(graph,{cwd,signal,onEvent,...streaming,plugins:await ExtractorRegistry.load(cwd)}),
       getPluginCatalog:async()=>runtimeCatalog(cwd),

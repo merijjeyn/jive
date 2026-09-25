@@ -21,7 +21,8 @@ sequential where their data dependencies require it.
 
 ### Planner models
 
-- Use OpenRouter for the main planning LLM.
+- Reach planning LLMs through providers: OpenRouter by default, plus native
+  Anthropic, OpenAI and any endpoint that speaks a supported protocol.
 - Offer a choice of leading models rather than binding the agent to one model.
 
 ### Implementation stack
@@ -157,7 +158,37 @@ than treating a confidence statistic as a correctness guarantee. Numeric
 acceptance criteria depend on the question type and workflow, not one universal
 confidence threshold.
 
-## OpenRouter model selection
+## Model providers
+
+The provider layer (`src/providers/`) separates the wire protocol from the
+vendor, after the design of the pi coding agent's `pi-ai` package:
+
+- A protocol adapter (`openai-completions`, `anthropic-messages`,
+  `openai-responses`) streams one completion into the planner's callbacks and
+  returns an OpenAI-shaped `PlannerMessage`, the format sessions persist.
+- A provider is data: ID, protocol, base URL, key sources, headers, models and
+  `compat` flags. Built-ins live in `builtin.ts`; `~/.config/jive/models.json`
+  and a project's `.jive/models.json` add or change providers field by field.
+- `compat` records how an endpoint departs from its protocol (how effort is
+  requested, OpenRouter's routing and cache fields, Anthropic beta fields).
+  Defaults are detected from the host and overridden per provider or model.
+- A model reference is an OpenRouter ID or `provider:model`. Assistant messages
+  record the reference and protocol that produced them, and the native reply
+  (Anthropic content blocks with thinking signatures, Responses output items with
+  encrypted reasoning). Adapters replay native state only to the provider or
+  model that produced it and send plain text and tool calls to every other model,
+  so a session can switch providers.
+- The retry rule is shared: a request is replayed only while nothing has reached
+  the transcript or the graph builder.
+
+Anthropic's own API is reached through the official SDK, with SDK retries off.
+Summarized thinking streams into the transcript, and effort is sent as
+`output_config.effort`. Compaction keeps recent turns verbatim after an archive
+note, which changes the history their thinking blocks are bound to. The request
+therefore asks the API to drop such blocks rather than fail. Where that beta is
+unavailable, the request is retried once without thinking history.
+
+### OpenRouter model selection
 
 Use a curated list plus a custom model-ID entry. Refresh available model metadata
 from OpenRouter and cache it for startup and offline display. Check tool support

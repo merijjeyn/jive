@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
-import { fetchOpenRouterModelCatalog, loadCachedModelCatalog, mergeModelOptions, saveModelCatalog } from "../../src/planner/models";
+import { fetchOpenRouterModelCatalog, loadCachedModelCatalog, ProviderRegistry, saveModelCatalog } from "../../src/providers/index";
 import type { ModelOption } from "../../src/core/types";
 import { primarySource } from "./source";
 import { dataDirectory } from "./storage";
@@ -66,7 +66,12 @@ async function discover(agent: Agent): Promise<AgentModels> {
         await saveModelCatalog(data, catalog);
       } catch { notice = catalog ? "Using cached model capabilities." : "Effort metadata is unavailable; use the model's default effort."; }
     }
-    return { models: mergeModelOptions(catalog), notice };
+    // Every provider Jive can reach from the source checkout, with OpenRouter's live metadata.
+    const registry = new ProviderRegistry({ cwd: source.directory });
+    await registry.loadCachedCatalogs(source.directory);
+    if (catalog) registry.useOpenRouterCatalog(catalog);
+    const models = registry.modelOptions().filter((model) => model.available !== false || model.provider === "openrouter");
+    return { models, notice };
   }
   try {
     if (agent === "codex") {

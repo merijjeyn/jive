@@ -78,7 +78,9 @@ request fails with an explicit capacity error instead of silently dropping them.
 Stable prefixes support cache reuse between compactions, but cache hit rates
 also depend on the selected model/provider, caching configuration, expiry, and
 routing. OpenRouter documents a session ID for sticky routing and reports cache
-read/write usage. Track actual metrics rather than assuming append-only history
+read/write usage. Anthropic requests place breakpoints after the system prompt
+and at the end of the history; OpenAI's Responses requests pass the session ID as
+`prompt_cache_key`. Track actual metrics rather than assuming append-only history
 guarantees a specific hit rate.
 
 Compaction changes the prefix following the stable instructions. Retained text

@@ -10,15 +10,19 @@ export function ModelPicker(props: {
   onChoose: (id: string) => void;
 }) {
   // One row per model, name only: ids, context sizes and effort levels stay
-  // out of the list so it reads at a glance.
-  const options: SelectOption[] = props.models.map((m) => ({
-    name: m.id === props.current ? `● ${m.name}` : `  ${m.name}`,
+  // out of the list so it reads at a glance. Providers without credentials are
+  // left out, and the provider is named only when more than one is usable.
+  const models = props.models.filter((m) => m.available !== false || m.id === props.current);
+  const providers = new Set(models.map((m) => m.provider ?? m.id));
+  const label = (m: ModelOption) => providers.size > 1 && m.providerName ? `${m.name} · ${m.providerName}` : m.name;
+  const options: SelectOption[] = models.map((m) => ({
+    name: m.id === props.current ? `● ${label(m)}` : `  ${label(m)}`,
     description: "",
     value: m.id,
   }));
-  const selectedIndex = Math.max(0, props.models.findIndex((m) => m.id === props.current));
+  const selectedIndex = Math.max(0, models.findIndex((m) => m.id === props.current));
   const boxWidth = Math.min(props.width - 4, 56);
-  const boxHeight = Math.min(props.height - 4, options.length + 4);
+  const boxHeight = Math.min(props.height - 4, (options.length || 3) + 4);
   return (
     <box
       position="absolute"
@@ -37,7 +41,7 @@ export function ModelPicker(props: {
       paddingX={1}
     >
       {options.length === 0 ? (
-        <text fg={palette.textDim}>No models listed. Use /model &lt;id&gt; to set one directly.</text>
+        <text fg={palette.textDim}>No provider has credentials. Set a key such as OPENROUTER_API_KEY, or use /model provider:id.</text>
       ) : (
         <select
           focused
@@ -59,7 +63,7 @@ export function ModelPicker(props: {
         />
       )}
       <text fg={palette.textFaint} wrapMode="none">
-        ↑/↓ · Enter · Esc · /model &lt;id&gt; for a custom id
+        ↑/↓ · Enter · Esc · /model provider:id for others
       </text>
     </box>
   );

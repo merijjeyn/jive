@@ -11,6 +11,7 @@ import { validateRecording, type RecordingOptions } from "./recording";
 import { runTerminalProcess } from "./terminal";
 import { taskRunView } from "./activity";
 import { nativeSessionRoot } from "./native-sessions";
+import { ProviderRegistry } from "../../src/providers/index";
 
 export interface RunOptions {
   task: string; agent: Agent; headless?: boolean; terminal?: boolean; model?: string; effort?: string; executable?: string; extraArgs?: string[];
@@ -32,7 +33,10 @@ export interface RunRecord {
 }
 
 const terminal = new Set<RunStatus>(["completed", "failed", "cancelled", "timed_out"]);
-const credentialNames = ["OPENROUTER_API_KEY", "OPENROUTER_MODEL", "JEV_API_TOKEN", "TYPESAFE_API_KEY", "JEV_MODEL"];
+const credentialNames = [
+  "OPENROUTER_API_KEY", "OPENROUTER_MODEL", "JIVE_MODEL", "JEV_API_TOKEN", "TYPESAFE_API_KEY", "JEV_MODEL",
+  "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY",
+];
 
 export function parseDotEnv(text: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -214,7 +218,13 @@ export async function executeRun(id: string, root?: string): Promise<RunRecord> 
     }
     const prompt = await readFile(join(run.directory, "prompt.txt"), "utf8");
     run.command = agentCommand({ agent: run.agent, workspace: run.workspace, prompt, headless: run.mode === "headless", autoSubmit: run.mode === "terminal", model: run.model, effort: run.effort, executable: run.executable ?? (run.agent === "jive" && run.source.snapshot ? join(run.source.snapshot, "bin/jive") : undefined), extraArgs: run.extraArgs, finalPath: join(run.directory, "logs/final.txt") });
-    if (run.agent === "jive" && !env.OPENROUTER_API_KEY && !run.extraArgs.includes("--demo")) throw new Error("Jive requires OPENROUTER_API_KEY; set it in the shell or repository .env before preparing the run");
+    if (run.agent === "jive" && !run.extraArgs.includes("--demo")) {
+      // The same resolution Jive performs at launch: the chosen model, else its configured default.
+      const providers = new ProviderRegistry({ cwd: run.workspace, env });
+      const model = run.model ?? env.JIVE_MODEL ?? env.OPENROUTER_MODEL ?? providers.defaultModel();
+      if (!model) throw new Error("Jive has no model provider key; set OPENROUTER_API_KEY (or another provider's key) in the shell or repository .env before preparing the run");
+      if (!providers.hasCredentials(model)) throw new Error(`Jive cannot use ${model}: ${providers.missingCredentialsMessage(providers.resolve(model).provider)}`);
+    }
     run.agentVersion = run.agent === "jive" ? JSON.parse(await readFile(join(run.source.snapshot ?? REPO_ROOT, "package.json"), "utf8")).version : await capture([run.command[0]!, "--version"], run.workspace);
     run.startedAt = new Date().toISOString(); run.status = "running"; await save(run);
     const processOptions = {

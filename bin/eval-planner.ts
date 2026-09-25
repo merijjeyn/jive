@@ -7,6 +7,7 @@ import { parseArgs } from "node:util";
 import { plannerCases } from "../evals/planner/cases.ts";
 import { hasSemanticContinuation, verifyOutputs } from "../evals/planner/verify.ts";
 import { GraphAgentController } from "../src/planner/agent.ts";
+import { ProviderRegistry } from "../src/providers/index.ts";
 import { executeGraph } from "../src/core/executor.ts";
 import { runtimeCatalog } from "../src/core/catalog.ts";
 import { dependencies, validateGraph } from "../src/core/schema.ts";
@@ -17,16 +18,18 @@ const { values } = parseArgs({ options: {
   timeout: { type: "string", default: "120" }, help: { type: "boolean" },
 } });
 if (values.help) {
-  console.log("bun run eval:planner --model MODEL [--case NAME] [--out report.json] [--timeout SECONDS]\nLive API calls; requires OPENROUTER_API_KEY and JEV_API_TOKEN (or TYPESAFE_API_KEY) for semantic-batch. Workspaces are retained under a fresh temporary directory. Report heuristics and inspect traces alongside task correctness.");
+  console.log("bun run eval:planner --model MODEL [--case NAME] [--out report.json] [--timeout SECONDS]\nLive API calls; requires credentials for the model's provider (e.g. OPENROUTER_API_KEY) and JEV_API_TOKEN (or TYPESAFE_API_KEY) for semantic-batch. Workspaces are retained under a fresh temporary directory. Report heuristics and inspect traces alongside task correctness.");
   process.exit(0);
 }
-if (!process.env.OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is required for this live evaluation.");
 const selected = plannerCases.filter(c => !values.case || c.name === values.case);
 if (!selected.length) throw new Error(`Unknown case. Choose: ${plannerCases.map(c => c.name).join(", ")}`);
 if (selected.some(c => c.semantic) && !(process.env.JEV_API_TOKEN || process.env.TYPESAFE_API_KEY)) throw new Error("Semantic evaluation requires configured Jev credentials.");
 const timeoutMs = Number(values.timeout) * 1000;
 if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("timeout must be a positive number of seconds.");
-const model = values.model ?? process.env.OPENROUTER_MODEL ?? "google/gemini-3.8-flash";
+const providers = new ProviderRegistry({ cwd: process.cwd() });
+const model = values.model ?? process.env.JIVE_MODEL ?? process.env.OPENROUTER_MODEL ?? providers.defaultModel();
+if (!model) throw new Error("No model is configured; pass --model or set a provider key such as OPENROUTER_API_KEY.");
+if (!providers.hasCredentials(model)) throw new Error(providers.missingCredentialsMessage(providers.resolve(model).provider));
 const root = await mkdtemp(join(tmpdir(), "jive-planner-eval-"));
 const results = [];
 console.log(`Evaluation workspace: ${root}`);
@@ -38,7 +41,7 @@ for (const scenario of selected) {
     await writeFile(join(cwd, file), content);
   }));
   const controller = new GraphAgentController({
-    cwd, model, apiKey: process.env.OPENROUTER_API_KEY, toolSchema: graphToolParameters,
+    cwd, model, providers, toolSchema: graphToolParameters,
     supportsStreaming: true, getPluginCatalog: () => runtimeCatalog(cwd),
     execute: (graph, signal, onEvent, streaming) => executeGraph(graph, { cwd, signal, onEvent, ...streaming, trackFileChanges: false }),
   });

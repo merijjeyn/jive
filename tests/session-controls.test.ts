@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { ExecutionEvent, GraphReport } from "../src/core/types.ts";
 import { GraphAgentController } from "../src/planner/agent.ts";
-import { mergeModelOptions, saveModelCatalog } from "../src/planner/models.ts";
+import { mergeModelOptions, saveModelCatalog } from "../src/providers/index.ts";
 import { SessionStore } from "../src/session/store.ts";
 
 const originalFetch = globalThis.fetch;

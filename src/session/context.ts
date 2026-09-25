@@ -37,6 +37,8 @@ export function estimateTokens(value: unknown): number {
 }
 
 function messageTokens(message: PlannerMessage): number {
+  // A native reply is the whole message as its provider sees it; the rest duplicates it.
+  if (message.native !== undefined) return 4 + estimateTokens({ role: message.role, native: message.native });
   return 4 + estimateTokens(message);
 }
 

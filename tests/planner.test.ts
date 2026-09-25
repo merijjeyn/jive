@@ -9,8 +9,7 @@ import { executeGraph } from "../src/core/executor.ts";
 import { runtimeContext } from "../src/planner/runtime-context.ts";
 import { validateGraph } from "../src/core/schema.ts";
 import { defaultEffortFor, GraphAgentController } from "../src/planner/agent.ts";
-import { mergeModelOptions } from "../src/planner/models.ts";
-import { OpenRouterClient } from "../src/planner/openrouter.ts";
+import { mergeModelOptions, ProviderClient, ProviderRegistry } from "../src/providers/index.ts";
 
 const temporaryDirectories: string[] = [];
 const originalFetch = globalThis.fetch;
@@ -220,8 +219,8 @@ describe("OpenRouter planner", () => {
   });
 
   test("parses split SSE and fragmented tool arguments", async () => {
-    const client = new OpenRouterClient({
-      apiKey: "test-key",
+    const client = new ProviderClient({
+      registry: new ProviderRegistry({ cwd: tmpdir(), sources: [], keys: { openrouter: "test-key" } }),
       fetch: (async () => toolResponse()) as unknown as typeof fetch,
     });
     const result = await client.complete({

@@ -1,11 +1,15 @@
 import { normalizeSessionName } from "./names.ts";
+import type { PlannerMessage } from "./types.ts";
 
+/** Used through OpenRouter when it is configured and no naming model is. */
 export const SESSION_NAMING_MODEL = "google/gemma-3-27b-it";
 export const SESSION_NAMING_RETRIES = 3;
 const SESSION_NAME_MAX_LENGTH = 48;
 
 export interface SessionNamingInput {
   sessionId: string;
+  /** The session's planner model, used when the namer has no model of its own. */
+  model?: string;
   userMessage: string;
   assistantMessage?: string;
 }
@@ -15,11 +19,22 @@ export type SessionNameGenerator = (
   signal?: AbortSignal,
 ) => Promise<string>;
 
-export interface OpenRouterSessionNamerOptions {
-  apiKey: string;
-  fetch?: typeof globalThis.fetch;
-  endpoint?: string;
+/** The shape of ProviderClient.complete that naming needs. */
+export type NamingCompletion = (request: {
+  model: string;
+  sessionId: string;
+  messages: PlannerMessage[];
+  effort?: string;
+  signal?: AbortSignal;
+  retry?: { attempts: number };
+}) => Promise<{ message: PlannerMessage }>;
+
+export interface ModelSessionNamerOptions {
+  complete: NamingCompletion;
+  /** A model reference; each session's own model when unset. */
   model?: string;
+  /** The lightest effort a model accepts, if it takes one. */
+  effortFor?: (model: string) => string | undefined;
   /** Retries after the initial request. */
   retries?: number;
   retryDelayMs?: number;
@@ -42,101 +57,77 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function contentFromResponse(value: unknown): string {
-  if (!value || typeof value !== "object") return "";
-  const choices = (value as { choices?: unknown }).choices;
-  if (!Array.isArray(choices)) return "";
-  const content = (choices[0] as { message?: { content?: unknown } } | undefined)?.message?.content;
-  if (typeof content !== "string") return "";
+/** A model may answer with the requested JSON object or with the bare title. */
+function nameFromContent(content: string | null): string {
+  if (!content) return "";
+  const trimmed = content.trim();
   try {
-    const parsed = JSON.parse(content) as { name?: unknown };
+    const parsed = JSON.parse(trimmed.replace(/^```(?:json)?\s*|\s*```$/g, "")) as { name?: unknown };
     if (typeof parsed.name === "string") return parsed.name;
   } catch {
-    // A provider may ignore response_format. A validated plain-text title is safe.
+    // A validated plain-text title is safe.
   }
-  return content;
+  return trimmed;
 }
 
-/** Small, isolated OpenRouter request used only for cosmetic session naming. */
-export class OpenRouterSessionNamer {
-  readonly apiKey: string;
-  readonly fetch: typeof globalThis.fetch;
-  readonly endpoint: string;
-  readonly model: string;
+/** Small, isolated request used only for cosmetic session naming. */
+export class ModelSessionNamer {
+  readonly model?: string;
   readonly retries: number;
   readonly retryDelayMs: number;
   readonly timeoutMs: number;
+  readonly #complete: NamingCompletion;
+  readonly #effortFor?: (model: string) => string | undefined;
 
-  constructor(options: OpenRouterSessionNamerOptions) {
-    this.apiKey = options.apiKey;
-    this.fetch = options.fetch ?? globalThis.fetch;
-    this.endpoint = options.endpoint ?? "https://openrouter.ai/api/v1/chat/completions";
-    this.model = options.model ?? SESSION_NAMING_MODEL;
+  constructor(options: ModelSessionNamerOptions) {
+    this.#complete = options.complete;
+    this.#effortFor = options.effortFor;
+    if (options.model) this.model = options.model;
     this.retries = options.retries ?? SESSION_NAMING_RETRIES;
     this.retryDelayMs = options.retryDelayMs ?? 250;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   generate: SessionNameGenerator = async (input, signal) => {
+    const model = this.model ?? input.model;
+    if (!model) throw new Error("No model is available for naming sessions.");
+    const effort = this.#effortFor?.(model);
+    const messages: PlannerMessage[] = [
+      {
+        role: "system",
+        content: [
+          "Name this coding-agent session.",
+          "Return a concrete 3-7 word title, at most 48 characters, as JSON: {\"name\": \"...\"}.",
+          "Preserve useful issue IDs, filenames, and commands.",
+          "Do not use quotes, Markdown, trailing punctuation, or generic words such as Session or Task.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          `First request:\n${input.userMessage.slice(0, 4_000)}`,
+          input.assistantMessage
+            ? `\nFirst outcome:\n${input.assistantMessage.slice(0, 2_000)}`
+            : "",
+        ].join(""),
+      },
+    ];
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.retries; attempt += 1) {
       signal?.throwIfAborted();
       try {
         const timeout = AbortSignal.timeout(this.timeoutMs);
         const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-        const response = await this.fetch(this.endpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages: [
-              {
-                role: "system",
-                content: [
-                  "Name this coding-agent session.",
-                  "Return a concrete 3-7 word title, at most 48 characters.",
-                  "Preserve useful issue IDs, filenames, and commands.",
-                  "Do not use quotes, Markdown, trailing punctuation, or generic words such as Session or Task.",
-                ].join(" "),
-              },
-              {
-                role: "user",
-                content: [
-                  `First request:\n${input.userMessage.slice(0, 4_000)}`,
-                  input.assistantMessage
-                    ? `\nFirst outcome:\n${input.assistantMessage.slice(0, 2_000)}`
-                    : "",
-                ].join(""),
-              },
-            ],
-            temperature: 0.2,
-            max_tokens: 80,
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "session_name",
-                strict: true,
-                schema: {
-                  type: "object",
-                  properties: {
-                    name: { type: "string", minLength: 1, maxLength: SESSION_NAME_MAX_LENGTH },
-                  },
-                  required: ["name"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          }),
+        const { message } = await this.#complete({
+          model,
+          sessionId: input.sessionId,
+          messages,
+          ...(effort ? { effort } : {}),
           signal: requestSignal,
+          retry: { attempts: 1 },
         });
-        if (!response.ok) {
-          throw new Error(`OpenRouter naming request failed (${response.status}).`);
-        }
-        const name = normalizeSessionName(contentFromResponse(await response.json()), SESSION_NAME_MAX_LENGTH);
-        if (!name) throw new Error("OpenRouter returned an empty session name.");
+        const name = normalizeSessionName(nameFromContent(message.content), SESSION_NAME_MAX_LENGTH);
+        if (!name) throw new Error("The naming model returned an empty session name.");
         return name;
       } catch (error) {
         signal?.throwIfAborted();

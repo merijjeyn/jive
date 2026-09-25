@@ -7,7 +7,7 @@ import {
   fallbackSessionName,
   listSessions,
   normalizeSessionName,
-  OpenRouterSessionNamer,
+  ModelSessionNamer,
   resolveSessionReference,
   SESSION_NAMING_MODEL,
   SessionStore,
@@ -87,37 +87,53 @@ describe("session discovery and names", () => {
   });
 });
 
-describe("OpenRouter session naming", () => {
-  test("uses Gemma 3 27B and retries three times after the first failure", async () => {
-    const bodies: Array<Record<string, any>> = [];
-    let requests = 0;
-    const namer = new OpenRouterSessionNamer({
-      apiKey: "key",
+describe("Session naming", () => {
+  test("asks the naming model with light effort and retries three times after the first failure", async () => {
+    const requests: Array<Record<string, any>> = [];
+    const namer = new ModelSessionNamer({
+      model: "google/gemma-3-27b-it",
       retries: 3,
       retryDelayMs: 0,
-      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        requests += 1;
-        bodies.push(JSON.parse(String(init?.body)));
-        if (requests < 4) return new Response("unavailable", { status: 503 });
-        return Response.json({ choices: [{ message: { content: JSON.stringify({ name: "Fix Resume Picker" }) } }] });
-      }) as typeof fetch,
+      effortFor: () => "none",
+      complete: async (request) => {
+        requests.push(request);
+        if (requests.length < 4) throw new Error("unavailable");
+        return { message: { role: "assistant", content: JSON.stringify({ name: "Fix Resume Picker" }) } };
+      },
     });
-    await expect(namer.generate({ sessionId: "s", userMessage: "resume sessions" }))
+    await expect(namer.generate({ sessionId: "s", model: "anthropic:claude-opus-5-5", userMessage: "resume sessions" }))
       .resolves.toBe("Fix Resume Picker");
-    expect(requests).toBe(4);
-    expect(bodies[0]!.model).toBe("google/gemma-3-27b-it");
-    expect(bodies[0]!.response_format.json_schema.schema.properties.name.maxLength).toBe(48);
+    expect(requests).toHaveLength(4);
+    expect(requests[0]!.model).toBe("google/gemma-3-27b-it");
+    expect(requests[0]!.effort).toBe("none");
+    // The namer owns its retries; the client must not multiply them.
+    expect(requests[0]!.retry).toEqual({ attempts: 1 });
+  });
+
+  test("falls back to the session's own model and accepts a bare title", async () => {
+    const models: string[] = [];
+    const namer = new ModelSessionNamer({
+      retries: 0,
+      complete: async (request) => {
+        models.push(request.model);
+        return { message: { role: "assistant", content: "Trace Flaky Upload Test" } };
+      },
+    });
+    await expect(namer.generate({ sessionId: "s", model: "corp:qwen3-coder", userMessage: "why does upload flake" }))
+      .resolves.toBe("Trace Flaky Upload Test");
+    expect(models).toEqual(["corp:qwen3-coder"]);
   });
 
   test("keeps failure cosmetic after all four attempts", async () => {
     let requests = 0;
-    const namer = new OpenRouterSessionNamer({
-      apiKey: "key",
+    const namer = new ModelSessionNamer({
+      model: "google/gemma-3-27b-it",
       retries: 3,
       retryDelayMs: 0,
-      fetch: (async () => { requests += 1; return new Response("bad", { status: 500 }); }) as unknown as typeof fetch,
+      complete: async () => { requests += 1; throw new Error("request failed"); },
     });
     await expect(namer.generate({ sessionId: "s", userMessage: "anything" })).rejects.toThrow("failed");
     expect(requests).toBe(4);
   });
 });
+

@@ -5,7 +5,7 @@ import { BUILDING_LABEL, GraphStreamParser } from "../core/graph-stream";
 import type { ExecutionEvent, Graph, GraphReport } from "../core/types";
 import type { SessionStore } from "../session/store";
 import type { AgentOptions } from "./agent";
-import type { ToolCallDelta } from "./openrouter";
+import type { ToolCallDelta } from "../providers/types.ts";
 
 export interface BuildingGraph {
   id: string;

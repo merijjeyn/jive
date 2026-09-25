@@ -5,11 +5,14 @@ export interface PlannerToolCall {
     name: string;
     arguments: string;
   };
+  /** Provider state on the call, such as Gemini's thought signature; replayed only to its model. */
+  extra_content?: unknown;
 }
 
 /**
- * The OpenAI-compatible message shape persisted in a session. `model` and
- * `provider` are local provenance fields and are removed before an API call.
+ * The OpenAI-compatible message shape persisted in a session. `model`, `api`,
+ * `provider`, `reasoning_field` and `native` are local provenance fields; each
+ * protocol adapter builds its own request from them.
  */
 export interface PlannerMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -19,8 +22,16 @@ export interface PlannerMessage {
   name?: string;
   reasoning?: string;
   reasoning_details?: unknown;
+  /** The model reference that produced an assistant message, e.g. `anthropic:claude-opus-5-5`. */
   model?: string;
+  /** The wire protocol that produced it; absent on messages from before provider support. */
+  api?: string;
+  /** For routers such as OpenRouter, the upstream that served it. */
   provider?: string;
+  /** The OpenAI-compatible field the reasoning arrived in, when not `reasoning`. */
+  reasoning_field?: string;
+  /** The provider's own reply, replayed verbatim to the same provider. */
+  native?: unknown;
 }
 
 export type SessionEventType =

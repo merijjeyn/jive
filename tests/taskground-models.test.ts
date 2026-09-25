@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { codexModels, claudeModels, validateModelSelection } from "../taskground/app/models";
 import { agentCommand } from "../taskground/app/agents";
-import { saveModelCatalog } from "../src/planner/models";
+import { saveModelCatalog } from "../src/providers/index";
 
 test("model catalogues preserve per-model efforts and omit hidden Codex models", () => {
   expect(codexModels({ models: [

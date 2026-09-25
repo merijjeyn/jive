@@ -106,7 +106,7 @@ export function createDemoController(cwd:string):AgentController {
       return work;
     },
     interrupt(){abort?.abort(new Error("Interrupted by user"));},
-    setModel(){add("notice","Demo mode uses local fixtures. Start without --demo for OpenRouter models.");},
+    setModel(){add("notice","Demo mode uses local fixtures. Start without --demo to use real models.");},
     async setEffort(level){
       if(snapshot.busy){snapshot={...snapshot,error:"Interrupt the active turn before changing effort."};notify();return;}
       const effort=["auto","default"].includes(level)?undefined:level;
