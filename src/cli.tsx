@@ -40,6 +40,7 @@ async function main(){
 
 Options: --cwd DIR --model ID --effort LEVEL --json --headless --prompt TEXT --prefill TEXT
 --model takes an OpenRouter ID or provider:model, e.g. anthropic:claude-opus-5-5.
+Headless mode skips automatic session naming.
 --prompt submits immediately. --prefill fills the interactive composer without submitting.
 Interactive commands: /resume [ID], /sessions, /name TEXT, /rename TEXT,
 /model, /effort [LEVEL], /new, /clear, /pin TEXT, /quit.
@@ -94,6 +95,7 @@ configured in ~/.config/jive/models.json; see docs/USAGE.md. Install: see README
     // A resumed session keeps its own model unless one is named explicitly.
     const model=values.model??(sessionId?undefined:process.env.JIVE_MODEL??process.env.OPENROUTER_MODEL??providers.defaultModel());
     controller=await createAgent({cwd,model,providers,sessionId,toolSchema:graphToolParameters,
+      generateSessionName:values.headless?false:undefined,
       supportsStreaming:true,
       execute:async(graph,signal,onEvent,streaming)=>executeGraph(graph,{cwd,signal,onEvent,...streaming,plugins:await ExtractorRegistry.load(cwd)}),
       getPluginCatalog:async()=>runtimeCatalog(cwd),

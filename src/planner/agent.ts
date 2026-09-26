@@ -75,8 +75,8 @@ export interface AgentOptions {
   supportsStreaming?: boolean;
   /** Transient-failure retries for planner requests; see DEFAULT_RETRY_POLICY. */
   retry?: Partial<RetryPolicy>;
-  /** Optional side-channel namer. createAgent() supplies one from the configured naming model. */
-  generateSessionName?: SessionNameGenerator;
+  /** Optional side-channel namer. false disables naming; createAgent() supplies one from the configured naming model. */
+  generateSessionName?: SessionNameGenerator | false;
   /** Recorded with generated names; the session's own model when unset. */
   sessionNamingModel?: string;
 }
@@ -1377,7 +1377,7 @@ export function createAgent(options: AgentOptions): AgentController {
   });
   const namingModel = namingModelFor(providers, options.sessionNamingModel);
   const client = new ProviderClient({ registry: providers });
-  const namer = namingModel !== false && !options.generateSessionName
+  const namer = namingModel !== false && options.generateSessionName === undefined
     ? new ModelSessionNamer({
       complete: (request) => client.complete(request),
       ...(namingModel ? { model: namingModel } : {}),

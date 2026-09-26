@@ -229,10 +229,13 @@ the failure is reported and the planner decides what to do.
 
 ## Sessions
 
-Every session gets a stable friendly fallback name. After its first turn, a
-background request asks `google/gemma-3-27b-it` for a concise title; naming
+Every session gets a stable friendly fallback name. In interactive mode, after
+its first turn, a background request asks `google/gemma-3-27b-it` for a concise title; naming
 never blocks the turn. Names are append-only session events and appear in
 `--sessions` and the session picker.
+
+Headless mode skips automatic naming, avoiding the extra model request and
+waiting for it at process exit. This also applies to Harbor benchmark runs.
 
 The session picker is scoped to the current working directory, newest first,
 and searchable by name, ID, or model. Resuming drains active work, flushes the
