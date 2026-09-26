@@ -1,6 +1,6 @@
 {
   "name": "@merijjeyn/jive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A terminal coding agent that plans work as executable graphs: bash commands and bounded model decisions run locally as branches, loops, and parallel batches between planner turns.",
   "license": "MIT",
   "repository": {
