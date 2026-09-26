@@ -5,9 +5,6 @@ description = "Standalone Harbor integration for Jive"
 requires-python = ">=3.12"
 dependencies = ["harbor==0.23.0"]
 
-[project.scripts]
-jive-harbor = "jive_harbor.cli:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -5,7 +5,7 @@ import unittest
 
 from harbor.models.task.task import Task
 from harbor.models.trajectories import Trajectory
-from jive_harbor.cli import report
+from jive_harbor.report import report
 from jive_harbor.metrics import extract, write_outputs
 from jive_harbor.runtime import collect_changes, inventory
 from jive_harbor.source import read_manifest, snapshot

@@ -64,3 +64,8 @@ def read_manifest(bundle: Path) -> dict:
             if not member.isfile() or Path(member.name).is_absolute() or ".." in Path(member.name).parts:
                 raise ValueError(f"Invalid bundle member: {member.name}")
         return json.load(archive.extractfile("source.json"))
+
+
+if __name__ == "__main__":
+    root = Path(__file__).resolve().parents[2]
+    print(snapshot(root, root / "harbor/.cache/sources"))

@@ -75,9 +75,11 @@ def main() -> int:
     before = inventory(root)
     (logs / "workspace-before.json").write_text(json.dumps(before))
     # The package's optional Bun npm shim needs postinstall; use our pinned runtime.
-    argv = ["/usr/local/bin/bun", "/opt/jive/bin/jive.ts", "--headless", "--json", "--cwd", str(root)]
+    # Native session/graph logs retain the full trace. Planner --json repeats the
+    # entire growing state on each update, producing hundreds of MB per task.
+    argv = ["/usr/local/bin/bun", "/opt/jive/bin/jive.ts", "--headless", "--cwd", str(root)]
     if config.get("demo"):
-        argv += ["--demo"]
+        argv += ["--demo", "--json"]
     else:
         argv += ["--model", config["model"], "--prompt", config["instruction"]]
         if config.get("effort"):
@@ -88,7 +90,8 @@ def main() -> int:
              "initial_runs": [p.name for p in (native / "runs").glob("*")]}
     (logs / "execution.json").write_text(json.dumps(state))
     started = time.monotonic()
-    with (logs / "stdout.jsonl").open("wb") as stdout, (logs / "stderr.log").open("wb") as stderr:
+    stdout_name = "stdout.jsonl" if config.get("demo") else "stdout.log"
+    with (logs / stdout_name).open("wb") as stdout, (logs / "stderr.log").open("wb") as stderr:
         child = subprocess.Popen(argv, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
         def stop(signum, frame):

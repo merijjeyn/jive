@@ -77,8 +77,8 @@ export interface AgentOptions {
   supportsStreaming?: boolean;
   /** Transient-failure retries for planner requests; see DEFAULT_RETRY_POLICY. */
   retry?: Partial<RetryPolicy>;
-  /** Optional side-channel namer. createAgent() supplies Gemma 3 27B by default. */
-  generateSessionName?: SessionNameGenerator;
+  /** Optional side-channel namer. false disables naming; createAgent() supplies Gemma 3 27B by default. */
+  generateSessionName?: SessionNameGenerator | false;
   sessionNamingModel?: string;
 }
 
@@ -1321,7 +1321,7 @@ export class GraphAgentController implements AgentController {
 
 export function createAgent(options: AgentOptions): AgentController {
   const apiKey = options.apiKey ?? process.env.OPENROUTER_API_KEY;
-  const namer = apiKey && !options.generateSessionName
+  const namer = apiKey && options.generateSessionName === undefined
     ? new OpenRouterSessionNamer({ apiKey })
     : undefined;
   return new GraphAgentController({

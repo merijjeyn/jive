@@ -39,6 +39,7 @@ async function main(){
   jive update                       Pull the latest sources (git installs)
 
 Options: --cwd DIR --model ID --effort LEVEL --json --headless --prompt TEXT --prefill TEXT
+Headless mode skips automatic session naming.
 --prompt submits immediately. --prefill fills the interactive composer without submitting.
 Interactive commands: /resume [ID], /sessions, /name TEXT, /rename TEXT,
 /model, /effort [LEVEL], /new, /clear, /pin TEXT, /quit.
@@ -75,6 +76,7 @@ directory (searched upward) or the jive checkout. Install: see README.md.
     const {createAgent}=await import("./planner/agent");
     const sessionId=values.resume?await resolveSessionReference(cwd,values.resume):undefined;
     controller=await createAgent({cwd,model:values.model??(sessionId?undefined:process.env.OPENROUTER_MODEL??"google/gemini-3.8-flash"),sessionId,toolSchema:graphToolParameters,
+      generateSessionName:values.headless?false:undefined,
       supportsStreaming:true,
       execute:async(graph,signal,onEvent,streaming)=>executeGraph(graph,{cwd,signal,onEvent,...streaming,plugins:await ExtractorRegistry.load(cwd)}),
       getPluginCatalog:async()=>runtimeCatalog(cwd),

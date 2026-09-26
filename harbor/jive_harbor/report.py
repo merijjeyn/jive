@@ -1,15 +1,11 @@
+"""Export retained Harbor metrics; run jobs with Harbor's own CLI."""
+
 import argparse
 import csv
 from datetime import datetime
 import json
 from pathlib import Path
-import subprocess
 import sys
-
-from .source import snapshot
-
-ROOT = Path(__file__).resolve().parents[2]
-INTEGRATION = ROOT / "harbor"
 
 
 def duration(start, end):
@@ -68,33 +64,20 @@ def report(directory: Path) -> list[dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Standalone Jive/Harbor integration")
-    commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("snapshot", help="Freeze this checkout's Jive runtime; print the bundle path")
-    run = commands.add_parser("run", help="Run Jive; remaining arguments are passed to harbor run", add_help=False)
-    run.add_argument("args", nargs=argparse.REMAINDER)
-    export = commands.add_parser("report", help="Export retained Harbor trial metrics")
-    export.add_argument("directory", type=Path)
-    export.add_argument("--format", choices=("json", "csv"), default="json")
-    # Preserve Harbor's own flags without teaching this wrapper its CLI schema.
-    if len(sys.argv) > 1 and sys.argv[1] == "run":
-        args = sys.argv[2:]
-        if any(arg in ("-a", "--agent", "--agent-import-path") or arg.startswith(("--agent=", "--agent-import-path=")) for arg in args):
-            parser.error("This wrapper selects Jive. Use uv run harbor run for other agents.")
-        bundle = snapshot(ROOT, INTEGRATION / ".cache/sources")
-        argv = ["harbor", "run", "--agent", "jive_harbor.agent:JiveAgent",
-                "--ak", f"source_bundle={bundle}", "--jobs-dir", str(INTEGRATION / "jobs"), *args]
-        raise SystemExit(subprocess.call(argv))
+    parser = argparse.ArgumentParser(description="Export retained Harbor trial metrics")
+    parser.add_argument("directory", type=Path)
+    parser.add_argument("--format", choices=("json", "csv"), default="json")
     options = parser.parse_args()
-    if options.command == "snapshot":
-        print(snapshot(ROOT, INTEGRATION / ".cache/sources"))
-    elif options.command == "report":
-        if not options.directory.is_dir():
-            parser.error(f"Not a results directory: {options.directory}")
-        rows = report(options.directory)
-        if options.format == "json":
-            print(json.dumps(rows, indent=2))
-        elif rows:
-            writer = csv.DictWriter(sys.stdout, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
-            writer.writeheader()
-            writer.writerows({key: json.dumps(v) if isinstance(v, (dict, list)) else v for key, v in row.items()} for row in rows)
+    if not options.directory.is_dir():
+        parser.error(f"Not a results directory: {options.directory}")
+    rows = report(options.directory)
+    if options.format == "json":
+        print(json.dumps(rows, indent=2))
+    elif rows:
+        writer = csv.DictWriter(sys.stdout, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
+        writer.writeheader()
+        writer.writerows({key: json.dumps(v) if isinstance(v, (dict, list)) else v for key, v in row.items()} for row in rows)
+
+
+if __name__ == "__main__":
+    main()

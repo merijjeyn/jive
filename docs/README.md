@@ -146,7 +146,7 @@ Details for each are in [docs/USAGE.md](USAGE.md).
 jive                              Interactive agent in the current directory
 jive --demo                       Interactive demo (no API calls)
 jive --prefill TEXT               Start with an editable draft prompt
-jive --headless --prompt TEXT     Run one prompt and print the result
+jive --headless --prompt TEXT     Run one prompt; automatic session naming is skipped
 jive --run FILE [--json]          Execute a saved graph; --json streams JSONL events
 jive --resume ID [--search QUERY] Restore a session, or search its log
 jive --sessions                   List saved sessions

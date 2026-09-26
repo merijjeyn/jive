@@ -17,7 +17,7 @@ from .source import read_manifest
 
 
 class JiveOptions(InstalledAgentOptions):
-    source_bundle: str = Field(description="Immutable bundle created by jive-harbor snapshot")
+    source_bundle: str = Field(description="Immutable bundle created by python -m jive_harbor.source")
     effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     demo: bool = Field(default=False, description="Run Jive's deterministic graph fixture without model calls")
 
@@ -44,7 +44,8 @@ class JiveAgent(BaseInstalledAgent):
 set -eu
 if ! command -v python3 >/dev/null || ! command -v curl >/dev/null || ! command -v unzip >/dev/null || ! command -v git >/dev/null; then
   command -v apt-get >/dev/null || { echo 'Jive needs python3, curl, unzip, git and a glibc Linux image'; exit 1; }
-  apt-get update -qq && apt-get install -y -qq python3 curl unzip git ca-certificates
+  apt-get update -qq
+  apt-get install -y -qq python3 curl unzip git ca-certificates
 fi
 if ! command -v bun >/dev/null || [ "$(bun --version)" != '1.4.2' ]; then
   case "$(uname -m)" in x86_64) arch=x64;; aarch64|arm64) arch=aarch64;; *) exit 1;; esac
