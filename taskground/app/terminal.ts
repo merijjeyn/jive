@@ -352,9 +352,11 @@ export async function runTerminalProcess(command: string[], options: {
             failOutput(error);
           }
         },
-        exit(_terminal, exitCode) {
+        // exitCode is PTY lifecycle status (0=EOF, 1=read error). On Linux, reading the
+        // master after the last slave descriptor closes fails with EIO rather than EOF,
+        // so a nonzero status is the normal hangup there, not lost output.
+        exit() {
           resolvePtyClosed();
-          if (exitCode !== 0) failOutput(new Error("Terminal PTY closed with an I/O error"));
         },
       },
       onExit(_process, exitCode, signal) {

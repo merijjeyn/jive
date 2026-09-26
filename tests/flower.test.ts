@@ -168,15 +168,20 @@ describe("flower lifecycle", () => {
   test("opens steadily and never jumps between frames", () => {
     const inks = [2, 4, 6, 8, 10].map((t) => inkCount(lines(t, W, H)));
     for (let i = 1; i < inks.length; i++) expect(inks[i]!).toBeGreaterThan(inks[i - 1]! * 1.05);
+    // Render each frame once and compare it with the previous one.
+    let previous = lines(0, W, H);
     for (let t = 0; t < 90; t += 0.1) {
-      expect(cellDelta(lines(t, W, H), lines(t + 0.1, W, H))).toBeLessThan(0.04);
+      const next = lines(t + 0.1, W, H);
+      expect(cellDelta(previous, next)).toBeLessThan(0.04);
+      previous = next;
     }
     // Between rests, only the wind, petal flex and light change.
     const a = inkCount(lines(11, W, H));
     const b = inkCount(lines(14, W, H));
     expect(Math.max(a, b) / Math.min(a, b)).toBeLessThan(1.15);
     expect(orbToString(renderOrb(11, W, H))).not.toBe(orbToString(renderOrb(14, W, H)));
-  });
+    // Renders ~900 frames; shared CI runners are several times slower than a laptop.
+  }, 30000);
 });
 
 describe("lighting", () => {
