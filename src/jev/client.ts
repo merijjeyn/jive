@@ -76,7 +76,7 @@ export class JevClient implements JevAdapter {
   async #call(request: JevRequest, model: string, apiKey: string, signal?: AbortSignal): Promise<JevResponse> {
     const localSignal = AbortSignal.timeout(60000);
     const requestSignal = signal ? AbortSignal.any([signal, localSignal]) : localSignal;
-    const response = await (this.options.fetch ?? fetch)(`${this.options.baseUrl ?? "https://api.typesafe.ai/v1"}/systemone`, {
+    const response = await (this.options.fetch ?? fetch)(`${this.options.baseUrl ?? process.env.JEV_BASE_URL ?? "https://api.typesafe.ai/v1"}/systemone`, {
       method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ...request, model }), signal: requestSignal,
     });
