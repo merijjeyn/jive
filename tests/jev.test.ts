@@ -10,6 +10,21 @@ test("Jev client sends structured questions and preserves uncertainty", async ()
   expect(authorization).toBe("Bearer test-key");expect(result.answers.route.confidence).toBe(.25);
 });
 
+test("JEV_BASE_URL points the client at another System One server", async () => {
+  const urls:string[]=[];
+  const transport = (async (url:any) => {urls.push(String(url));return new Response(JSON.stringify({model:"m",answers:{ok:{type:"noul",noul:.9}},usage:{}}));}) as unknown as typeof fetch;
+  const request={state:"x",questions:{ok:{type:"noul" as const,instructions:"Ok?"}}};
+  const previous=process.env.JEV_BASE_URL;
+  try {
+    delete process.env.JEV_BASE_URL;
+    await new JevClient({apiKey:"k",fetch:transport}).evaluate(request);
+    process.env.JEV_BASE_URL="http://127.0.0.1:8080/v1";
+    await new JevClient({apiKey:"k",fetch:transport}).evaluate(request);
+    await new JevClient({apiKey:"k",fetch:transport,baseUrl:"http://explicit/v1"}).evaluate(request);
+  } finally { if(previous===undefined)delete process.env.JEV_BASE_URL; else process.env.JEV_BASE_URL=previous; }
+  expect(urls).toEqual(["https://api.typesafe.ai/v1/systemone","http://127.0.0.1:8080/v1/systemone","http://explicit/v1/systemone"]);
+});
+
 test("malformed Jev answers cannot drive downstream execution", () => {
   const request={state:"x",questions:{route:{type:"choice",instructions:"Which?",criteria:{a:"A",b:"B"}}}};
   expect(()=>validateAnswer(request,{model:"x",answers:{route:{type:"choice",choice:"outside",confidence:1,probabilities:{a:.9,b:.1}}}})).toThrow("selected choice");

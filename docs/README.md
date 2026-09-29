@@ -86,7 +86,8 @@ only for graphs that use `jev` decision nodes; bash-only graphs run without it.
 With an OpenRouter key the planner defaults to `google/gemini-3.8-flash`;
 otherwise it uses the default model of the first provider with a key. Choose
 another with `--model` (for example `anthropic:claude-opus-5-5`) or
-`JIVE_MODEL`. Decisions default to `jev-1.13.0`, overridable with `JEV_MODEL`.
+`JIVE_MODEL`. Decisions default to `jev-1.13.0`, overridable with `JEV_MODEL`;
+`JEV_BASE_URL` selects another compatible decision server.
 [Model providers](USAGE.md#model-providers) covers other providers and
 internal endpoints.
 

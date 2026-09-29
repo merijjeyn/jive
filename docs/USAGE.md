@@ -23,7 +23,14 @@ OPENAI_API_KEY=...       # or OpenAI's API directly
 JEV_API_TOKEN=...        # Jev decision service, used by `jev` nodes
 JIVE_MODEL=...           # optional; see "Model providers" for the default
 JEV_MODEL=...            # optional; default jev-1.13.0
+JEV_BASE_URL=...         # optional; default https://api.typesafe.ai/v1
 ```
+
+`JEV_BASE_URL` points `jev` nodes at any server that speaks the same
+`/systemone` API, such as a self-hosted
+[OpenJev](https://github.com/razorback16/openjev) (`http://127.0.0.1:8080/v1`)
+or a hosted one. Set `JEV_MODEL` to a model that server serves, for example
+`openjev-latest`.
 
 Changing models is explicit, in the UI or with `--model`. There is no automatic
 model fallback.
